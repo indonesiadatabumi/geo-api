@@ -1,5 +1,6 @@
-// app.post('/api/land-plots', 
 const db = require('../db');
+const wkx = require('wkx');
+
 exports.createLandplots = async (req, res) => {
     const { name, owner, geometry, properties } = req.body;
 
@@ -8,20 +9,27 @@ exports.createLandplots = async (req, res) => {
     }
 
     try {
-        const geom = `SRID=4326;${geometry}`; // Geometry in WKT format
-        const area = await db.raw(`SELECT ST_Area(ST_GeomFromText(?)) AS area`, [geom]);
-        const perimeter = await db.raw(`SELECT ST_Perimeter(ST_GeomFromText(?)) AS perimeter`, [geom]);
+        const rawQuery =
+            `WITH plot_geom AS (
+            SELECT 
+                ST_SetSRID(ST_GeomFromGeoJSON(?), 4326) AS geom
+            ),
+            plot_details AS (
+            SELECT
+                ST_Area(geom) AS area,
+                ST_Perimeter(geom) AS perimeter
+            FROM plot_geom
+            )
+            INSERT INTO land_plots (name, owner, geom, area, perimeter, properties)
+            SELECT ?, ?, geom, area, perimeter, ?
+            FROM plot_geom, plot_details
+            RETURNING *;`;
+        const result = await db.raw(
+            rawQuery,
+            [JSON.stringify(geometry), name, owner, JSON.stringify(properties)]
+        );
 
-        const result = await db('land_plots').insert({
-            name,
-            owner,
-            properties: JSON.stringify(properties),
-            geom,
-            area: area.rows[0].area,
-            perimeter: perimeter.rows[0].perimeter
-        }).returning('*');
-
-        res.status(201).json(result[0]);
+        res.status(201).json(result.rows[0]);
     } catch (err) {
         console.error('Error creating land plot:', err);
         res.status(500).send('Error creating land plot');
@@ -30,8 +38,19 @@ exports.createLandplots = async (req, res) => {
 
 exports.getAllLandplots = async (req, res) => {
     try {
+        // Fetch all plots
         const plots = await db.select('*').from('land_plots');
-        res.status(200).json(plots);
+
+        // Convert WKB to GeoJSON for each plot
+        const plotsWithGeoJSON = plots.map(plot => {
+            return {
+                ...plot,
+                geom: wkx.Geometry.parse(Buffer.from(plot.geom, 'hex')).toGeoJSON(),
+            };
+        });
+
+        // Send the updated response
+        res.status(200).json(plotsWithGeoJSON);
     } catch (err) {
         console.error('Error fetching land plots:', err);
         res.status(500).send('Error fetching land plots');
@@ -43,24 +62,43 @@ exports.editLandplots = async (req, res) => {
     const { name, owner, geometry, properties } = req.body;
 
     try {
-        const geom = geometry ? `SRID=4326;${geometry}` : null;
         const updates = { name, owner, properties: JSON.stringify(properties) };
 
-        if (geom) {
-            const area = await db.raw(`SELECT ST_Area(ST_GeomFromText(?)) AS area`, [geom]);
-            const perimeter = await db.raw(`SELECT ST_Perimeter(ST_GeomFromText(?)) AS perimeter`, [geom]);
+        if (geometry) {
+            // Ensure GeoJSON is passed as a string
+            const geoJsonString = JSON.stringify(geometry);
+
+            // Generate geometry using ST_GeomFromGeoJSON and cast explicitly
+            const geomQuery = await db.raw(
+                `SELECT ST_SetSRID(ST_GeomFromGeoJSON(?::json)::geometry, 4326) AS geom`,
+                [geoJsonString]
+            );
+            const geom = geomQuery.rows[0].geom;
+
+            // Calculate area and perimeter with explicit casts
+            const areaQuery = await db.raw(`SELECT ST_Area(?::geometry) AS area`, [geom]);
+            const perimeterQuery = await db.raw(`SELECT ST_Perimeter(?::geometry) AS perimeter`, [geom]);
+
             updates.geom = geom;
-            updates.area = area.rows[0].area;
-            updates.perimeter = perimeter.rows[0].perimeter;
+            updates.area = areaQuery.rows[0].area;
+            updates.perimeter = perimeterQuery.rows[0].perimeter;
         }
 
-        const result = await db('land_plots').where({ id }).update(updates).returning('*');
-        res.status(200).json(result[0]);
+        // Update the land plot
+        const updatedResult = await db('land_plots').where({ id }).update(updates).returning('*');
+        const updatedPlot = updatedResult[0];
+
+        // Convert WKB to GeoJSON using ST_AsGeoJSON
+        const geoJsonQuery = await db.raw(`SELECT ST_AsGeoJSON(geom) AS geojson FROM land_plots WHERE id = ?`, [id]);
+        updatedPlot.geom = JSON.parse(geoJsonQuery.rows[0].geojson); // Parse GeoJSON into an object
+
+        res.status(200).json(updatedPlot);
     } catch (err) {
         console.error('Error updating land plot:', err);
         res.status(500).send('Error updating land plot');
     }
 };
+
 
 exports.deleteLandPlots = async (req, res) => {
     const { id } = req.params;

@@ -16,6 +16,8 @@
     "pg": "^8.13.1",
     "postgres": "^3.4.5",
     "swagger-jsdoc": "^6.2.8",
-    "swagger-ui-express": "^5.0.1"
+    "swagger-ui-express": "^5.0.1",
+    "wellknown": "^0.5.0",
+    "wkx": "^0.5.0"
   }
 }

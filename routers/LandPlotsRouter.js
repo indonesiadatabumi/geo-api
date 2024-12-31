@@ -181,7 +181,7 @@ router.get('/', getAllLandplots);
  *       500:
  *         description: Internal server error. Failed to update the land plot.
  */
-router.put('/:id', editLandplots);
+router.patch('/:id', editLandplots);
 
 /**
  * @swagger
