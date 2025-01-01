@@ -28,7 +28,7 @@ exports.createLandplots = async (req, res) => {
             rawQuery,
             [JSON.stringify(geometry), name, owner, JSON.stringify(properties)]
         );
-
+        result.rows[0].geom = wkx.Geometry.parse(Buffer.from(result.rows[0].geom, 'hex')).toGeoJSON();
         res.status(201).json(result.rows[0]);
     } catch (err) {
         console.error('Error creating land plot:', err);
